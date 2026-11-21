@@ -159,6 +159,8 @@ const DEFAULT_PROFILE = {
   iban: "PT50 0000 0000 0000 0000 0000 0",
   bankName: "Banco em Portugal",
   logoUrl: "",
+  seriesPrefix: "ORC",
+  nextSequence: 1,
   defaultVatRate: 23,
   defaultVatExemption: "none", // none, art53, art9, reverseCharge
   defaultIrsRetention: 0, // 0%, 11.5%, 16.5%, 25%

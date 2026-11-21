@@ -9,8 +9,62 @@ const STORAGE_KEYS = {
   PROFILE: 'orc_joao_santos_profile',
   CATALOG: 'orc_joao_santos_catalog',
   SAVED_QUOTES: 'orc_joao_santos_history',
-  CURRENT_DRAFT: 'orc_joao_santos_current_draft'
+  CURRENT_DRAFT: 'orc_joao_santos_current_draft',
+  SEQUENCE: 'orc_joao_santos_next_sequence'
 };
+
+// Gerador e Gestor de Numeração Sequencial Profissional (Ex: ORC-2026/001)
+function getNextSequentialQuoteNumber() {
+  const currentYear = new Date().getFullYear();
+  const prefix = (state.profile?.seriesPrefix || "ORC").trim().toUpperCase();
+
+  // 1. Procurar o maior número existente no histórico para este ano e prefixo
+  let maxSeq = 0;
+  if (state.savedQuotes && state.savedQuotes.length > 0) {
+    const regex = new RegExp(`^${prefix}-${currentYear}/(\\d+)$`, 'i');
+    state.savedQuotes.forEach(q => {
+      if (q && q.number) {
+        const match = String(q.number).trim().match(regex);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxSeq) {
+            maxSeq = num;
+          }
+        }
+      }
+    });
+  }
+
+  // 2. Verificar contador persistido em localStorage
+  const storedSeqKey = `${STORAGE_KEYS.SEQUENCE}_${currentYear}`;
+  const storedSeq = parseInt(localStorage.getItem(storedSeqKey), 10);
+  let nextSeq = 1;
+  if (!isNaN(storedSeq) && storedSeq > 0) {
+    nextSeq = Math.max(maxSeq + 1, storedSeq);
+  } else {
+    nextSeq = maxSeq + 1;
+  }
+
+  return `${prefix}-${currentYear}/${String(nextSeq).padStart(3, '0')}`;
+}
+
+function updateSequenceAfterSave(quoteNumber) {
+  if (!quoteNumber) return;
+  const currentYear = new Date().getFullYear();
+  const prefix = (state.profile?.seriesPrefix || "ORC").trim().toUpperCase();
+  const regex = new RegExp(`^${prefix}-${currentYear}/(\\d+)$`, 'i');
+  const match = String(quoteNumber).trim().match(regex);
+  if (match) {
+    const savedNum = parseInt(match[1], 10);
+    if (!isNaN(savedNum)) {
+      const storedSeqKey = `${STORAGE_KEYS.SEQUENCE}_${currentYear}`;
+      const currentStored = parseInt(localStorage.getItem(storedSeqKey), 10) || 0;
+      if (savedNum >= currentStored) {
+        localStorage.setItem(storedSeqKey, String(savedNum + 1));
+      }
+    }
+  }
+}
 
 // Estado da Aplicação
 let state = {
@@ -19,7 +73,7 @@ let state = {
   savedQuotes: [],
   currentQuote: {
     id: generateUUID(),
-    number: "ORC-" + new Date().getFullYear() + "/" + String(Math.floor(Math.random() * 900) + 100),
+    number: "",
     issueDate: new Date().toISOString().split('T')[0],
     validUntilDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     client: {
@@ -101,6 +155,11 @@ function loadStoredData() {
 
     const storedHistory = localStorage.getItem(STORAGE_KEYS.SAVED_QUOTES);
     state.savedQuotes = storedHistory ? JSON.parse(storedHistory) : [];
+
+    // Preencher número sequencial inicial se estiver vazio ou com formato aleatório antigo
+    if (!state.currentQuote.number || /^ORC-\d{4}\/\d{3}$/.test(state.currentQuote.number) === false) {
+      state.currentQuote.number = getNextSequentialQuoteNumber();
+    }
 
     // Preencher campos padrão se estiver vazio
     if (state.currentQuote.items.length === 0) {
@@ -705,6 +764,7 @@ function saveQuoteToHistory() {
     }
 
     localStorage.setItem(STORAGE_KEYS.SAVED_QUOTES, JSON.stringify(state.savedQuotes));
+    updateSequenceAfterSave(quoteToSave.number);
     showNotification(`Orçamento ${quoteToSave.number} guardado!`, 'success');
   } catch (err) {
     console.error("Erro ao guardar histórico:", err);
@@ -716,7 +776,7 @@ function createNewQuote() {
   if (confirm("Deseja iniciar um novo orçamento?")) {
     state.currentQuote = {
       id: generateUUID(),
-      number: "ORC-" + new Date().getFullYear() + "/" + String(Math.floor(Math.random() * 900) + 100),
+      number: getNextSequentialQuoteNumber(),
       issueDate: new Date().toISOString().split('T')[0],
       validUntilDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       client: { name: "", nif: "", email: "", phone: "", address: "" },
@@ -728,7 +788,7 @@ function createNewQuote() {
       notes: state.profile.notes || ""
     };
     renderAll();
-    showNotification("Novo orçamento iniciado!", "info");
+    showNotification(`Novo orçamento ${state.currentQuote.number} iniciado!`, "info");
   }
 }
 
@@ -787,6 +847,12 @@ function openProfileModal() {
   document.getElementById('profBankName').value = prof.bankName;
   document.getElementById('profLogoUrl').value = prof.logoUrl || "";
 
+  // Numeração Sequencial
+  const nextNum = getNextSequentialQuoteNumber();
+  const nextSeqMatch = nextNum.match(/\/(\d+)$/);
+  document.getElementById('profSeriesPrefix').value = prof.seriesPrefix || "ORC";
+  document.getElementById('profNextSeq').value = nextSeqMatch ? parseInt(nextSeqMatch[1], 10) : 1;
+
   modal.classList.remove('hidden');
 }
 
@@ -804,6 +870,16 @@ function saveProfileSettings() {
   state.profile.iban = document.getElementById('profIban').value.trim();
   state.profile.bankName = document.getElementById('profBankName').value.trim();
   state.profile.logoUrl = document.getElementById('profLogoUrl').value.trim();
+
+  // Guardar Prefixo da Série e Próximo Número Sequencial
+  const prefix = (document.getElementById('profSeriesPrefix').value.trim().toUpperCase()) || "ORC";
+  state.profile.seriesPrefix = prefix;
+
+  const nextSeqInput = parseInt(document.getElementById('profNextSeq').value, 10);
+  if (!isNaN(nextSeqInput) && nextSeqInput >= 1) {
+    const currentYear = new Date().getFullYear();
+    localStorage.setItem(`${STORAGE_KEYS.SEQUENCE}_${currentYear}`, String(nextSeqInput));
+  }
 
   localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(state.profile));
   closeProfileModal();
