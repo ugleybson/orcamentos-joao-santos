@@ -1,6 +1,7 @@
 /**
  * Aplicação Principal do Sistema de Orçamentos
  * Titular: João Santos | NIF: 269413448
+ * Otimizado para Mobile (Telemóvel) e Desktop
  */
 
 // Chaves de armazenamento LocalStorage
@@ -42,7 +43,52 @@ document.addEventListener('DOMContentLoaded', () => {
   loadStoredData();
   initializeUI();
   renderAll();
+
+  // Gerir redimensionamento da janela para assegurar visibilidade correta
+  window.addEventListener('resize', handleWindowResize);
 });
+
+// Alternador de Abas Mobile (Editor vs Preview)
+function switchMobileView(view) {
+  const viewEditor = document.getElementById('viewEditor');
+  const viewPreview = document.getElementById('viewPreview');
+  const btnEditor = document.getElementById('tabBtnEditor');
+  const btnPreview = document.getElementById('tabBtnPreview');
+
+  if (view === 'editor') {
+    viewEditor.classList.remove('hidden');
+    viewPreview.classList.add('hidden');
+    btnEditor.classList.add('active', 'text-blue-900');
+    btnEditor.classList.remove('text-slate-600');
+    btnPreview.classList.remove('active', 'text-blue-900');
+    btnPreview.classList.add('text-slate-600');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } else {
+    viewEditor.classList.add('hidden');
+    viewPreview.classList.remove('hidden');
+    btnPreview.classList.add('active', 'text-blue-900');
+    btnPreview.classList.remove('text-slate-600');
+    btnEditor.classList.remove('active', 'text-blue-900');
+    btnEditor.classList.add('text-slate-600');
+    updatePreview();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+function handleWindowResize() {
+  if (window.innerWidth >= 1024) {
+    document.getElementById('viewEditor')?.classList.remove('hidden');
+    document.getElementById('viewPreview')?.classList.remove('hidden');
+  }
+}
+
+// Drawer de Menu Mobile
+function toggleMobileMenu() {
+  const drawer = document.getElementById('mobileMenuDrawer');
+  if (drawer) {
+    drawer.classList.toggle('hidden');
+  }
+}
 
 // Carrega dados salvos ou defaults
 function loadStoredData() {
@@ -139,12 +185,6 @@ function isValidPortugueseNif(nif) {
   const cleanNif = nif.replace(/\s+/g, '');
   if (!/^\d{9}$/.test(cleanNif)) return false;
 
-  // Primeiro dígito válido em Portugal:
-  // 1, 2, 3 (Pessoas Singulares)
-  // 5 (Pessoas Coletivas / Empresas)
-  // 6 (Organismos Públicos)
-  // 8 (Entidades Despersonalizadas)
-  // 9 (Sociedades Irregulares / Não Residentes)
   const firstDigit = cleanNif.charAt(0);
   if (!['1', '2', '3', '5', '6', '8', '9'].includes(firstDigit)) return false;
 
@@ -170,9 +210,9 @@ function validateClientNifFeedback(nif) {
   }
 
   if (isValidPortugueseNif(nif)) {
-    feedbackEl.innerHTML = '<span class="text-xs text-emerald-600 font-medium"><i class="fa-solid fa-circle-check"></i> NIF Válido (Portugal)</span>';
+    feedbackEl.innerHTML = '<span class="text-xs text-emerald-600 font-medium"><i class="fa-solid fa-circle-check"></i> Válido</span>';
   } else {
-    feedbackEl.innerHTML = '<span class="text-xs text-amber-600 font-medium"><i class="fa-solid fa-triangle-exclamation"></i> NIF com formato ou dígito de controlo inválido</span>';
+    feedbackEl.innerHTML = '<span class="text-xs text-amber-600 font-medium"><i class="fa-solid fa-triangle-exclamation"></i> NIF Inválido</span>';
   }
 }
 
@@ -219,6 +259,16 @@ function removeItem(id) {
   updatePreview();
 }
 
+function adjustItemQuantity(id, delta) {
+  const item = state.currentQuote.items.find(i => i.id === id);
+  if (!item) return;
+  const newQty = Math.max(0.5, (item.quantity || 1) + delta);
+  item.quantity = Math.round(newQty * 10) / 10;
+  renderItemsTable();
+  recalculateTotals();
+  updatePreview();
+}
+
 function updateItemField(id, field, value) {
   const item = state.currentQuote.items.find(i => i.id === id);
   if (!item) return;
@@ -253,7 +303,6 @@ function calculateQuoteFinancials() {
     totalDescontos += discount;
     baseTributavel += itemLiquido;
 
-    // Cálculo do IVA respeitando isenções
     if (state.currentQuote.vatExemption === 'none') {
       const taxRate = item.vatRate !== undefined ? item.vatRate : 23;
       const vatVal = (itemLiquido * taxRate) / 100;
@@ -265,11 +314,9 @@ function calculateQuoteFinancials() {
     }
   });
 
-  // Retenção de IRS (se aplicável para ENI / Recibos Verdes a outras entidades com contabilidade)
   const irsRate = state.currentQuote.irsRetentionRate || 0;
   const totalIrs = (baseTributavel * irsRate) / 100;
 
-  // Total Final
   const totalGeral = baseTributavel + totalIva;
   const totalAPagar = totalGeral - totalIrs;
 
@@ -289,10 +336,16 @@ function calculateQuoteFinancials() {
 function recalculateTotals() {
   const totals = calculateQuoteFinancials();
 
-  // Atualizar valores no painel lateral
+  // Painel de Resumo
   document.getElementById('summarySubtotal').textContent = formatCurrency(totals.baseTributavel);
   document.getElementById('summaryIva').textContent = formatCurrency(totals.totalIva);
   document.getElementById('summaryTotal').textContent = formatCurrency(totals.totalGeral);
+
+  // Barra de Ação Mobile Fixa
+  const mobileBarTotal = document.getElementById('mobileBarTotal');
+  if (mobileBarTotal) {
+    mobileBarTotal.textContent = formatCurrency(totals.totalGeral);
+  }
 
   const irsRow = document.getElementById('summaryIrsRow');
   if (totals.irsRate > 0) {
@@ -304,75 +357,169 @@ function recalculateTotals() {
   }
 }
 
-// Renderização dos Itens na Tabela de Edição
+// Renderização dos Itens (Mobile Cards + Desktop Table)
 function renderItemsTable() {
   const tbody = document.getElementById('itemsTableBody');
-  if (!tbody) return;
+  const mobileContainer = document.getElementById('itemsMobileCards');
 
   if (state.currentQuote.items.length === 0) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="7" class="text-center py-8 text-slate-400">
-          <i class="fa-solid fa-inbox text-3xl mb-2 block"></i>
-          Nenhum serviço adicionado. Clique em "Adicionar Item" ou escolha do catálogo abaixo.
-        </td>
-      </tr>
+    const emptyStateHtml = `
+      <div class="text-center py-6 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+        <i class="fa-solid fa-inbox text-2xl mb-1.5 block text-slate-300"></i>
+        <div class="text-xs font-medium">Nenhum serviço adicionado</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">Adicione um novo serviço ou use o catálogo rápido abaixo</div>
+      </div>
     `;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="text-center py-6 text-slate-400">Nenhum serviço adicionado.</td></tr>`;
+    if (mobileContainer) mobileContainer.innerHTML = emptyStateHtml;
     return;
   }
 
-  tbody.innerHTML = state.currentQuote.items.map((item, index) => {
-    const itemTotalLiquido = Math.max(0, (item.quantity * item.price) * (1 - (item.discountPercent || 0)/100));
-    return `
-      <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
-        <td class="p-2.5 text-center font-medium text-slate-400">${index + 1}</td>
-        <td class="p-2.5">
-          <input type="text" value="${escapeHtml(item.description)}" placeholder="Descrição do serviço/artigo"
-            oninput="updateItemField('${item.id}', 'description', this.value)"
-            class="w-full text-sm font-medium border border-slate-200 rounded px-2.5 py-1.5 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none" />
-          <input type="text" value="${escapeHtml(item.details || '')}" placeholder="Detalhes técnicos adicionais (opcional)"
-            oninput="updateItemField('${item.id}', 'details', this.value)"
-            class="w-full text-xs text-slate-500 border-none bg-transparent px-1 mt-1 outline-none" />
-        </td>
-        <td class="p-2.5 w-24">
-          <input type="number" step="0.5" min="0.01" value="${item.quantity}"
-            oninput="updateItemField('${item.id}', 'quantity', this.value)"
-            class="w-full text-sm text-center border border-slate-200 rounded px-2 py-1.5 focus:border-blue-600 outline-none" />
-        </td>
-        <td class="p-2.5 w-24">
-          <select onchange="updateItemField('${item.id}', 'unit', this.value)"
-            class="w-full text-xs border border-slate-200 rounded px-1.5 py-1.5 bg-white outline-none">
-            <option value="unid" ${item.unit === 'unid' ? 'selected' : ''}>unid</option>
-            <option value="horas" ${item.unit === 'horas' ? 'selected' : ''}>horas</option>
-            <option value="dias" ${item.unit === 'dias' ? 'selected' : ''}>dias</option>
-            <option value="m²" ${item.unit === 'm²' ? 'selected' : ''}>m²</option>
-            <option value="metro" ${item.unit === 'metro' ? 'selected' : ''}>metro</option>
-            <option value="kg" ${item.unit === 'kg' ? 'selected' : ''}>kg</option>
-            <option value="projeto" ${item.unit === 'projeto' ? 'selected' : ''}>projeto</option>
-            <option value="sessão" ${item.unit === 'sessão' ? 'selected' : ''}>sessão</option>
-            <option value="viagem" ${item.unit === 'viagem' ? 'selected' : ''}>viagem</option>
-          </select>
-        </td>
-        <td class="p-2.5 w-28">
-          <div class="relative">
-            <input type="number" step="0.01" min="0" value="${item.price}"
-              oninput="updateItemField('${item.id}', 'price', this.value)"
-              class="w-full text-sm text-right pr-6 pl-2 border border-slate-200 rounded py-1.5 focus:border-blue-600 outline-none" />
-            <span class="absolute right-2 top-2 text-xs text-slate-400">€</span>
+  // 1. Renderização para Desktop (Tabela)
+  if (tbody) {
+    tbody.innerHTML = state.currentQuote.items.map((item, index) => {
+      const itemTotalLiquido = Math.max(0, (item.quantity * item.price) * (1 - (item.discountPercent || 0)/100));
+      return `
+        <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
+          <td class="p-2 text-center font-medium text-slate-400">${index + 1}</td>
+          <td class="p-2">
+            <input type="text" value="${escapeHtml(item.description)}" placeholder="Descrição do serviço"
+              oninput="updateItemField('${item.id}', 'description', this.value)"
+              class="w-full text-xs font-medium border border-slate-200 rounded px-2.5 py-1.5 focus:border-blue-600 outline-none" />
+            <input type="text" value="${escapeHtml(item.details || '')}" placeholder="Detalhes adicionais (opcional)"
+              oninput="updateItemField('${item.id}', 'details', this.value)"
+              class="w-full text-[11px] text-slate-500 border-none bg-transparent px-1 mt-0.5 outline-none" />
+          </td>
+          <td class="p-2 w-20">
+            <input type="number" step="0.5" min="0.01" value="${item.quantity}"
+              oninput="updateItemField('${item.id}', 'quantity', this.value)"
+              class="w-full text-xs text-center border border-slate-200 rounded px-2 py-1.5 focus:border-blue-600 outline-none" />
+          </td>
+          <td class="p-2 w-20">
+            <select onchange="updateItemField('${item.id}', 'unit', this.value)"
+              class="w-full text-xs border border-slate-200 rounded px-1.5 py-1.5 bg-white outline-none">
+              <option value="unid" ${item.unit === 'unid' ? 'selected' : ''}>unid</option>
+              <option value="horas" ${item.unit === 'horas' ? 'selected' : ''}>horas</option>
+              <option value="dias" ${item.unit === 'dias' ? 'selected' : ''}>dias</option>
+              <option value="m²" ${item.unit === 'm²' ? 'selected' : ''}>m²</option>
+              <option value="metro" ${item.unit === 'metro' ? 'selected' : ''}>metro</option>
+              <option value="kg" ${item.unit === 'kg' ? 'selected' : ''}>kg</option>
+              <option value="projeto" ${item.unit === 'projeto' ? 'selected' : ''}>projeto</option>
+              <option value="sessão" ${item.unit === 'sessão' ? 'selected' : ''}>sessão</option>
+              <option value="viagem" ${item.unit === 'viagem' ? 'selected' : ''}>viagem</option>
+            </select>
+          </td>
+          <td class="p-2 w-24">
+            <div class="relative">
+              <input type="number" step="0.01" min="0" value="${item.price}"
+                oninput="updateItemField('${item.id}', 'price', this.value)"
+                class="w-full text-xs text-right pr-5 pl-2 border border-slate-200 rounded py-1.5 focus:border-blue-600 outline-none" />
+              <span class="absolute right-1.5 top-1.5 text-[11px] text-slate-400">€</span>
+            </div>
+          </td>
+          <td class="p-2 w-24 text-right font-medium text-slate-700 text-xs">
+            ${formatCurrency(itemTotalLiquido)}
+          </td>
+          <td class="p-2 w-10 text-center">
+            <button onclick="removeItem('${item.id}')" title="Remover item"
+              class="text-slate-300 hover:text-red-500 transition p-1.5 rounded-full hover:bg-red-50">
+              <i class="fa-solid fa-trash-can text-xs"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  // 2. Renderização Otimizada para Telemóvel (Cards com Steppers)
+  if (mobileContainer) {
+    mobileContainer.innerHTML = state.currentQuote.items.map((item, index) => {
+      const itemTotalLiquido = Math.max(0, (item.quantity * item.price) * (1 - (item.discountPercent || 0)/100));
+      return `
+        <div class="bg-slate-50 border border-slate-200/90 rounded-xl p-3 shadow-2xs relative">
+          
+          <!-- Cabeçalho do Card -->
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-1.5">
+              <span class="w-5 h-5 rounded-full bg-blue-100 text-blue-700 font-bold text-[11px] flex items-center justify-center">
+                ${index + 1}
+              </span>
+              <span class="text-xs font-semibold text-slate-700">Serviço</span>
+            </div>
+            <button onclick="removeItem('${item.id}')" title="Remover item"
+              class="touch-btn text-rose-500 hover:text-rose-700 px-2 py-1 text-xs rounded-lg active:bg-rose-50 transition">
+              <i class="fa-solid fa-trash-can mr-1"></i> Remover
+            </button>
           </div>
-        </td>
-        <td class="p-2.5 w-24 text-right font-medium text-slate-700 text-sm">
-          ${formatCurrency(itemTotalLiquido)}
-        </td>
-        <td class="p-2.5 w-12 text-center">
-          <button onclick="removeItem('${item.id}')" title="Remover item"
-            class="text-slate-300 hover:text-red-500 transition p-1.5 rounded-full hover:bg-red-50">
-            <i class="fa-solid fa-trash-can text-sm"></i>
-          </button>
-        </td>
-      </tr>
-    `;
-  }).join('');
+
+          <!-- Campos de Descrição -->
+          <div class="space-y-1.5 mb-2.5">
+            <input type="text" value="${escapeHtml(item.description)}" placeholder="Descrição do serviço"
+              oninput="updateItemField('${item.id}', 'description', this.value)"
+              class="w-full text-sm font-semibold border border-slate-200 rounded-lg px-2.5 py-2 bg-white focus:ring-2 focus:ring-blue-500 outline-none" />
+            <input type="text" value="${escapeHtml(item.details || '')}" placeholder="Detalhes complementares (opcional)"
+              oninput="updateItemField('${item.id}', 'details', this.value)"
+              class="w-full text-xs text-slate-600 border border-slate-200/60 rounded-lg px-2.5 py-1.5 bg-white/70 outline-none" />
+          </div>
+
+          <!-- Linha de Controlo: Quantidade com Stepper Touch, Unidade e Preço -->
+          <div class="grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-lg border border-slate-100">
+            
+            <!-- Stepper Touch de Quantidade (Colunas 6) -->
+            <div class="col-span-6">
+              <label class="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Quantidade</label>
+              <div class="flex items-center">
+                <button type="button" onclick="adjustItemQuantity('${item.id}', -1)"
+                  class="touch-btn w-8 h-8 rounded-l-lg bg-slate-100 text-slate-700 font-bold text-sm border border-slate-200 active:bg-slate-200">
+                  <i class="fa-solid fa-minus text-xs"></i>
+                </button>
+                <input type="number" step="0.5" min="0.01" value="${item.quantity}"
+                  oninput="updateItemField('${item.id}', 'quantity', this.value)"
+                  class="w-12 h-8 text-center text-sm font-bold border-y border-slate-200 outline-none" />
+                <button type="button" onclick="adjustItemQuantity('${item.id}', 1)"
+                  class="touch-btn w-8 h-8 rounded-r-lg bg-slate-100 text-slate-700 font-bold text-sm border border-slate-200 active:bg-slate-200">
+                  <i class="fa-solid fa-plus text-xs"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Unidade (Colunas 3) -->
+            <div class="col-span-3">
+              <label class="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Unid.</label>
+              <select onchange="updateItemField('${item.id}', 'unit', this.value)"
+                class="w-full h-8 text-xs font-medium border border-slate-200 rounded-lg px-1 bg-slate-50 outline-none">
+                <option value="unid" ${item.unit === 'unid' ? 'selected' : ''}>unid</option>
+                <option value="horas" ${item.unit === 'horas' ? 'selected' : ''}>horas</option>
+                <option value="dias" ${item.unit === 'dias' ? 'selected' : ''}>dias</option>
+                <option value="m²" ${item.unit === 'm²' ? 'selected' : ''}>m²</option>
+                <option value="metro" ${item.unit === 'metro' ? 'selected' : ''}>metro</option>
+                <option value="kg" ${item.unit === 'kg' ? 'selected' : ''}>kg</option>
+                <option value="projeto" ${item.unit === 'projeto' ? 'selected' : ''}>proj.</option>
+                <option value="sessão" ${item.unit === 'sessão' ? 'selected' : ''}>sessão</option>
+                <option value="viagem" ${item.unit === 'viagem' ? 'selected' : ''}>viagem</option>
+              </select>
+            </div>
+
+            <!-- Preço Unitário (Colunas 3) -->
+            <div class="col-span-3">
+              <label class="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Preço (€)</label>
+              <input type="number" step="0.5" min="0" value="${item.price}"
+                oninput="updateItemField('${item.id}', 'price', this.value)"
+                class="w-full h-8 text-xs font-bold text-right border border-slate-200 rounded-lg px-1.5 focus:border-blue-600 outline-none" />
+            </div>
+
+          </div>
+
+          <!-- Total do Item no Card -->
+          <div class="flex justify-between items-center mt-2 px-1 text-xs">
+            <span class="text-slate-400">Total do Item:</span>
+            <span class="font-bold text-blue-900 font-mono text-sm">${formatCurrency(itemTotalLiquido)}</span>
+          </div>
+
+        </div>
+      `;
+    }).join('');
+  }
 }
 
 // Atualização da Folha de Pré-visualização (A4 Oficial)
@@ -415,24 +562,24 @@ function updatePreview() {
   // Tabela de Itens no Documento
   const prevItemsTbody = document.getElementById('prevItemsTableBody');
   if (quote.items.length === 0) {
-    prevItemsTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-400 italic">Sem itens discriminados</td></tr>`;
+    prevItemsTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-400 italic text-xs">Sem itens discriminados</td></tr>`;
   } else {
     prevItemsTbody.innerHTML = quote.items.map((item, index) => {
       const itemSubtotal = Math.max(0, (item.quantity * item.price) * (1 - (item.discountPercent || 0)/100));
       return `
         <tr class="border-b border-slate-100">
-          <td class="py-2.5 px-3 text-slate-400 text-center font-mono text-xs">${index + 1}</td>
-          <td class="py-2.5 px-3">
-            <div class="font-semibold text-slate-800 text-sm">${escapeHtml(item.description || 'Item sem descrição')}</div>
-            ${item.details ? `<div class="text-xs text-slate-500 mt-0.5 leading-snug">${escapeHtml(item.details)}</div>` : ''}
+          <td class="py-2 px-2 text-slate-400 text-center font-mono text-xs">${index + 1}</td>
+          <td class="py-2 px-2">
+            <div class="font-semibold text-slate-800 text-xs sm:text-sm">${escapeHtml(item.description || 'Item sem descrição')}</div>
+            ${item.details ? `<div class="text-[11px] text-slate-500 mt-0.5 leading-snug">${escapeHtml(item.details)}</div>` : ''}
           </td>
-          <td class="py-2.5 px-3 text-center text-slate-700 text-sm font-medium">
-            ${item.quantity} <span class="text-xs text-slate-400">${item.unit}</span>
+          <td class="py-2 px-2 text-center text-slate-700 text-xs font-medium">
+            ${item.quantity} <span class="text-[10px] text-slate-400">${item.unit}</span>
           </td>
-          <td class="py-2.5 px-3 text-right text-slate-700 text-sm font-medium">
+          <td class="py-2 px-2 text-right text-slate-700 text-xs font-medium">
             ${formatCurrency(item.price)}
           </td>
-          <td class="py-2.5 px-3 text-right text-slate-900 font-semibold text-sm">
+          <td class="py-2 px-2 text-right text-slate-900 font-semibold text-xs sm:text-sm">
             ${formatCurrency(itemSubtotal)}
           </td>
         </tr>
@@ -482,7 +629,6 @@ function updatePreview() {
 
 // Render Geral
 function renderAll() {
-  // Preencher inputs
   document.getElementById('quoteNumber').value = state.currentQuote.number;
   document.getElementById('issueDate').value = state.currentQuote.issueDate;
   document.getElementById('validUntilDate').value = state.currentQuote.validUntilDate;
@@ -510,19 +656,19 @@ function renderCatalogPresetsList() {
   if (!container) return;
 
   container.innerHTML = state.catalog.map(cat => `
-    <div class="mb-4">
-      <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+    <div class="mb-3">
+      <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
         <i class="fa-solid ${cat.icon || 'fa-tag'} text-blue-600"></i> ${escapeHtml(cat.category)}
       </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-2">
         ${cat.items.map(item => `
           <div onclick="addPresetItemById('${item.id}')"
-            class="cursor-pointer bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 rounded-lg p-2.5 transition flex justify-between items-center group">
-            <div class="truncate pr-2">
+            class="touch-btn cursor-pointer bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 active:border-blue-400 rounded-lg p-2.5 transition flex justify-between items-center group">
+            <div class="truncate pr-2 text-left">
               <div class="text-xs font-semibold text-slate-800 group-hover:text-blue-900 truncate">${escapeHtml(item.description)}</div>
               <div class="text-[11px] text-slate-500">${formatCurrency(item.price)} / ${item.unit}</div>
             </div>
-            <button class="bg-white group-hover:bg-blue-600 text-slate-500 group-hover:text-white rounded-md p-1.5 transition text-xs shadow-sm flex-shrink-0">
+            <button type="button" class="bg-white group-hover:bg-blue-600 text-slate-500 group-hover:text-white rounded-md p-1.5 transition text-xs shadow-xs flex-shrink-0">
               <i class="fa-solid fa-plus"></i>
             </button>
           </div>
@@ -537,7 +683,7 @@ function addPresetItemById(id) {
     const found = cat.items.find(i => i.id === id);
     if (found) {
       addItemFromPreset(found);
-      showNotification(`Item "${found.description}" adicionado!`, 'success');
+      showNotification(`"${found.description}" adicionado!`, 'success');
       return;
     }
   }
@@ -559,15 +705,15 @@ function saveQuoteToHistory() {
     }
 
     localStorage.setItem(STORAGE_KEYS.SAVED_QUOTES, JSON.stringify(state.savedQuotes));
-    showNotification(`Orçamento ${quoteToSave.number} guardado com sucesso!`, 'success');
+    showNotification(`Orçamento ${quoteToSave.number} guardado!`, 'success');
   } catch (err) {
     console.error("Erro ao guardar histórico:", err);
-    showNotification("Erro ao guardar o orçamento.", "error");
+    showNotification("Erro ao guardar orçamento.", "error");
   }
 }
 
 function createNewQuote() {
-  if (confirm("Deseja iniciar um novo orçamento? (Certifique-se de que guardou o atual antes de prosseguir)")) {
+  if (confirm("Deseja iniciar um novo orçamento?")) {
     state.currentQuote = {
       id: generateUUID(),
       number: "ORC-" + new Date().getFullYear() + "/" + String(Math.floor(Math.random() * 900) + 100),
@@ -588,7 +734,13 @@ function createNewQuote() {
 
 // Exportação / Impressão em PDF
 function printQuote() {
-  window.print();
+  // Se estiver em mobile e na aba de edição, muda temporariamente para o preview antes de imprimir
+  if (window.innerWidth < 1024) {
+    switchMobileView('preview');
+  }
+  setTimeout(() => {
+    window.print();
+  }, 100);
 }
 
 // Enviar Resumo por WhatsApp
@@ -612,7 +764,7 @@ function shareViaWhatsApp() {
   text += `*VALOR TOTAL:* ${formatCurrency(totals.totalGeral)}\n\n`;
   text += `*Validade:* Até ${formatDatePt(quote.validUntilDate)}\n`;
   text += `*Condições de Pagamento:* ${quote.paymentTerms}\n\n`;
-  text += `Estamos à total disposição para qualquer esclarecimento ou para agendamento dos trabalhos!`;
+  text += `Estamos à disposição para qualquer esclarecimento ou agendamento dos trabalhos!`;
 
   const encodedText = encodeURIComponent(text);
   const waUrl = clientPhone ? `https://wa.me/${clientPhone}?text=${encodedText}` : `https://wa.me/?text=${encodedText}`;
@@ -656,35 +808,64 @@ function saveProfileSettings() {
   localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(state.profile));
   closeProfileModal();
   updatePreview();
-  showNotification("Dados de João Santos atualizados com sucesso!", "success");
+  showNotification("Dados atualizados com sucesso!", "success");
 }
 
 // Modal de Histórico de Orçamentos
 function openHistoryModal() {
   const modal = document.getElementById('historyModal');
   const tbody = document.getElementById('historyTableBody');
+  const mobileContainer = document.getElementById('historyCardsMobile');
 
   if (state.savedQuotes.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-slate-400">Ainda não existem orçamentos guardados.</td></tr>`;
+    const emptyHtml = `<div class="text-center py-6 text-slate-400 text-xs">Ainda não existem orçamentos guardados.</div>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-slate-400">Ainda não existem orçamentos guardados.</td></tr>`;
+    if (mobileContainer) mobileContainer.innerHTML = emptyHtml;
   } else {
-    tbody.innerHTML = state.savedQuotes.map(q => `
-      <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
-        <td class="p-3 font-semibold text-blue-700">${escapeHtml(q.number)}</td>
-        <td class="p-3">${escapeHtml(q.client?.name || 'Cliente')}</td>
-        <td class="p-3 text-xs text-slate-500">${formatDatePt(q.issueDate)}</td>
-        <td class="p-3 font-bold text-slate-800">${formatCurrency(q.totalValue || 0)}</td>
-        <td class="p-3 text-right space-x-1.5">
-          <button onclick="loadQuoteFromHistory('${q.id}')" title="Carregar Orçamento"
-            class="px-2.5 py-1 text-xs bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 rounded transition font-medium">
-            <i class="fa-solid fa-folder-open mr-1"></i> Abrir
-          </button>
-          <button onclick="deleteQuoteFromHistory('${q.id}')" title="Eliminar"
-            class="px-2 py-1 text-xs bg-red-50 hover:bg-red-600 hover:text-white text-red-600 rounded transition">
-            <i class="fa-solid fa-trash-can"></i>
-          </button>
-        </td>
-      </tr>
-    `).join('');
+    // Tabela Desktop
+    if (tbody) {
+      tbody.innerHTML = state.savedQuotes.map(q => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+          <td class="p-3 font-semibold text-blue-700">${escapeHtml(q.number)}</td>
+          <td class="p-3">${escapeHtml(q.client?.name || 'Cliente')}</td>
+          <td class="p-3 text-xs text-slate-500">${formatDatePt(q.issueDate)}</td>
+          <td class="p-3 font-bold text-slate-800">${formatCurrency(q.totalValue || 0)}</td>
+          <td class="p-3 text-right space-x-1.5">
+            <button onclick="loadQuoteFromHistory('${q.id}')" title="Carregar Orçamento"
+              class="px-2.5 py-1 text-xs bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 rounded transition font-medium">
+              <i class="fa-solid fa-folder-open mr-1"></i> Abrir
+            </button>
+            <button onclick="deleteQuoteFromHistory('${q.id}')" title="Eliminar"
+              class="px-2 py-1 text-xs bg-red-50 hover:bg-red-600 hover:text-white text-red-600 rounded transition">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // Cards Mobile
+    if (mobileContainer) {
+      mobileContainer.innerHTML = state.savedQuotes.map(q => `
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex justify-between items-center">
+          <div>
+            <div class="font-bold text-blue-900 text-xs">${escapeHtml(q.number)}</div>
+            <div class="text-xs text-slate-700 font-medium truncate max-w-[150px]">${escapeHtml(q.client?.name || 'Cliente')}</div>
+            <div class="text-[11px] text-slate-400">${formatDatePt(q.issueDate)} • <span class="font-bold text-slate-800">${formatCurrency(q.totalValue || 0)}</span></div>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button onclick="loadQuoteFromHistory('${q.id}')"
+              class="touch-btn px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold">
+              Abrir
+            </button>
+            <button onclick="deleteQuoteFromHistory('${q.id}')"
+              class="touch-btn p-1.5 text-rose-500 rounded-lg">
+              <i class="fa-solid fa-trash-can text-sm"></i>
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
   }
 
   modal.classList.remove('hidden');
@@ -705,19 +886,19 @@ function loadQuoteFromHistory(id) {
 }
 
 function deleteQuoteFromHistory(id) {
-  if (confirm("Tem a certeza que deseja remover este orçamento do histórico?")) {
+  if (confirm("Deseja remover este orçamento do histórico?")) {
     state.savedQuotes = state.savedQuotes.filter(q => q.id !== id);
     localStorage.setItem(STORAGE_KEYS.SAVED_QUOTES, JSON.stringify(state.savedQuotes));
     openHistoryModal();
-    showNotification("Orçamento removido do histórico.", "info");
+    showNotification("Orçamento removido.", "info");
   }
 }
 
-// Notificações Toast Modernas
+// Notificações Toast
 function showNotification(message, type = 'info') {
   const toast = document.createElement('div');
   const bg = type === 'success' ? 'bg-emerald-600' : (type === 'error' ? 'bg-rose-600' : 'bg-slate-800');
-  toast.className = `fixed bottom-5 right-5 z-50 text-white px-4 py-3 rounded-lg shadow-xl text-sm font-medium flex items-center gap-2 transform transition-all duration-300 translate-y-3 opacity-0 ${bg}`;
+  toast.className = `fixed top-20 sm:top-auto sm:bottom-6 right-3 left-3 sm:left-auto z-50 text-white px-4 py-3 rounded-xl shadow-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transform transition-all duration-300 translate-y-3 opacity-0 ${bg}`;
 
   const icon = type === 'success' ? 'fa-circle-check' : (type === 'error' ? 'fa-circle-exclamation' : 'fa-info-circle');
   toast.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${escapeHtml(message)}</span>`;
@@ -730,7 +911,7 @@ function showNotification(message, type = 'info') {
   setTimeout(() => {
     toast.classList.add('opacity-0', 'translate-y-2');
     setTimeout(() => toast.remove(), 300);
-  }, 3200);
+  }, 2800);
 }
 
 // Utilitários de Formatação
