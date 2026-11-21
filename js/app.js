@@ -150,6 +150,16 @@ function loadStoredData() {
     const storedProfile = localStorage.getItem(STORAGE_KEYS.PROFILE);
     state.profile = storedProfile ? JSON.parse(storedProfile) : { ...DEFAULT_PROFILE };
 
+    // Sincronizar dados reais de João Santos caso o perfil ainda contenha dados de exemplo
+    if (state.profile.email === "contato@joaosantos.pt" || (state.profile.iban && state.profile.iban.includes("0000 0000"))) {
+      state.profile.phone = DEFAULT_PROFILE.phone;
+      state.profile.email = DEFAULT_PROFILE.email;
+      state.profile.iban = DEFAULT_PROFILE.iban;
+      state.profile.bankName = DEFAULT_PROFILE.bankName;
+      state.profile.defaultIrsRetention = DEFAULT_PROFILE.defaultIrsRetention;
+      localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(state.profile));
+    }
+
     const storedCatalog = localStorage.getItem(STORAGE_KEYS.CATALOG);
     state.catalog = storedCatalog ? JSON.parse(storedCatalog) : [...DEFAULT_CATALOG];
 

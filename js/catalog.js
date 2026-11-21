@@ -153,17 +153,17 @@ const DEFAULT_PROFILE = {
   name: "João Santos",
   nif: "269413448",
   businessType: "Empresário em Nome Individual (ENI)",
-  phone: "+351 910 000 000",
-  email: "contato@joaosantos.pt",
+  phone: "+351 918940497",
+  email: "radical.joaosantos@gmail.com.pt",
   address: "Portugal",
-  iban: "PT50 0000 0000 0000 0000 0000 0",
-  bankName: "Banco em Portugal",
+  iban: "PT50 0045 3468 4034 9598 3935 8",
+  bankName: "Crédito Agrícola",
   logoUrl: "",
   seriesPrefix: "ORC",
   nextSequence: 1,
   defaultVatRate: 23,
   defaultVatExemption: "none", // none, art53, art9, reverseCharge
-  defaultIrsRetention: 0, // 0%, 11.5%, 16.5%, 25%
+  defaultIrsRetention: 11.5, // 0%, 11.5%, 16.5%, 25%
   defaultPaymentTerms: "50% na adjudicação do orçamento e 50% após a conclusão e validação dos trabalhos.",
   defaultValidityDays: 30,
   notes: "Orçamento válido pelo período indicado. Qualquer alteração ou trabalho imprevisto será previamente comunicado e acordado por escrito com o cliente."
