@@ -151,11 +151,12 @@ function loadStoredData() {
     state.profile = storedProfile ? JSON.parse(storedProfile) : { ...DEFAULT_PROFILE };
 
     // Sincronizar dados reais de João Santos caso o perfil ainda contenha dados de exemplo
-    if (state.profile.email === "contato@joaosantos.pt" || (state.profile.iban && state.profile.iban.includes("0000 0000"))) {
+    if (state.profile.email === "contato@joaosantos.pt" || (state.profile.iban && state.profile.iban.includes("0000 0000")) || !state.profile.impic) {
       state.profile.phone = DEFAULT_PROFILE.phone;
       state.profile.email = DEFAULT_PROFILE.email;
       state.profile.iban = DEFAULT_PROFILE.iban;
       state.profile.bankName = DEFAULT_PROFILE.bankName;
+      state.profile.impic = DEFAULT_PROFILE.impic;
       state.profile.defaultIrsRetention = DEFAULT_PROFILE.defaultIrsRetention;
       localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(state.profile));
     }
@@ -600,6 +601,16 @@ function updatePreview() {
   // Cabeçalho da Empresa / Emitente
   document.getElementById('prevProfileName').textContent = profile.name || "João Santos";
   document.getElementById('prevProfileNif').textContent = profile.nif || "269413448";
+
+  const impicEl = document.getElementById('prevProfileImpic');
+  const impicBadge = document.getElementById('prevImpicBadge');
+  if (profile.impic) {
+    if (impicEl) impicEl.textContent = profile.impic;
+    if (impicBadge) impicBadge.classList.remove('hidden');
+  } else {
+    if (impicBadge) impicBadge.classList.add('hidden');
+  }
+
   document.getElementById('prevProfileType').textContent = profile.businessType || "Empresário em Nome Individual";
   document.getElementById('prevProfileContact').innerHTML = `
     ${profile.phone ? `<div><i class="fa-solid fa-phone mr-1.5 text-blue-600"></i> ${escapeHtml(profile.phone)}</div>` : ''}
@@ -849,6 +860,7 @@ function openProfileModal() {
 
   document.getElementById('profName').value = prof.name;
   document.getElementById('profNif').value = prof.nif;
+  document.getElementById('profImpic').value = prof.impic || "";
   document.getElementById('profBusinessType').value = prof.businessType;
   document.getElementById('profPhone').value = prof.phone;
   document.getElementById('profEmail').value = prof.email;
@@ -873,6 +885,7 @@ function closeProfileModal() {
 function saveProfileSettings() {
   state.profile.name = document.getElementById('profName').value.trim();
   state.profile.nif = document.getElementById('profNif').value.trim();
+  state.profile.impic = document.getElementById('profImpic').value.trim();
   state.profile.businessType = document.getElementById('profBusinessType').value.trim();
   state.profile.phone = document.getElementById('profPhone').value.trim();
   state.profile.email = document.getElementById('profEmail').value.trim();

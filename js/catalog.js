@@ -152,6 +152,7 @@ const DEFAULT_CATALOG = [
 const DEFAULT_PROFILE = {
   name: "João Santos",
   nif: "269413448",
+  impic: "130221",
   businessType: "Empresário em Nome Individual (ENI)",
   phone: "+351 918940497",
   email: "radical.joaosantos@gmail.com.pt",
