@@ -1,0 +1,765 @@
+/**
+ * Aplicação Principal do Sistema de Orçamentos
+ * Titular: João Santos | NIF: 269413448
+ */
+
+// Chaves de armazenamento LocalStorage
+const STORAGE_KEYS = {
+  PROFILE: 'orc_joao_santos_profile',
+  CATALOG: 'orc_joao_santos_catalog',
+  SAVED_QUOTES: 'orc_joao_santos_history',
+  CURRENT_DRAFT: 'orc_joao_santos_current_draft'
+};
+
+// Estado da Aplicação
+let state = {
+  profile: null,
+  catalog: null,
+  savedQuotes: [],
+  currentQuote: {
+    id: generateUUID(),
+    number: "ORC-" + new Date().getFullYear() + "/" + String(Math.floor(Math.random() * 900) + 100),
+    issueDate: new Date().toISOString().split('T')[0],
+    validUntilDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    client: {
+      name: "",
+      nif: "",
+      email: "",
+      phone: "",
+      address: ""
+    },
+    items: [],
+    discountGlobal: 0,
+    vatExemption: "none",
+    irsRetentionRate: 0,
+    paymentTerms: "",
+    notes: ""
+  }
+};
+
+// Inicialização
+document.addEventListener('DOMContentLoaded', () => {
+  loadStoredData();
+  initializeUI();
+  renderAll();
+});
+
+// Carrega dados salvos ou defaults
+function loadStoredData() {
+  try {
+    const storedProfile = localStorage.getItem(STORAGE_KEYS.PROFILE);
+    state.profile = storedProfile ? JSON.parse(storedProfile) : { ...DEFAULT_PROFILE };
+
+    const storedCatalog = localStorage.getItem(STORAGE_KEYS.CATALOG);
+    state.catalog = storedCatalog ? JSON.parse(storedCatalog) : [...DEFAULT_CATALOG];
+
+    const storedHistory = localStorage.getItem(STORAGE_KEYS.SAVED_QUOTES);
+    state.savedQuotes = storedHistory ? JSON.parse(storedHistory) : [];
+
+    // Preencher campos padrão se estiver vazio
+    if (state.currentQuote.items.length === 0) {
+      state.currentQuote.paymentTerms = state.profile.defaultPaymentTerms || "";
+      state.currentQuote.notes = state.profile.notes || "";
+      state.currentQuote.vatExemption = state.profile.defaultVatExemption || "none";
+      state.currentQuote.irsRetentionRate = state.profile.defaultIrsRetention || 0;
+
+      // Adiciona um primeiro item demonstrativo amigável
+      addItemFromPreset(state.catalog[0]?.items[0]);
+    }
+  } catch (err) {
+    console.error("Erro ao carregar dados do LocalStorage:", err);
+    state.profile = { ...DEFAULT_PROFILE };
+    state.catalog = [...DEFAULT_CATALOG];
+  }
+}
+
+// Inicializa Eventos da Interface
+function initializeUI() {
+  // Atualizações automáticas de campos nos inputs
+  document.getElementById('quoteNumber').addEventListener('input', (e) => {
+    state.currentQuote.number = e.target.value;
+    updatePreview();
+  });
+  document.getElementById('issueDate').addEventListener('change', (e) => {
+    state.currentQuote.issueDate = e.target.value;
+    updatePreview();
+  });
+  document.getElementById('validUntilDate').addEventListener('change', (e) => {
+    state.currentQuote.validUntilDate = e.target.value;
+    updatePreview();
+  });
+
+  // Dados do Cliente
+  document.getElementById('clientName').addEventListener('input', (e) => {
+    state.currentQuote.client.name = e.target.value;
+    updatePreview();
+  });
+  document.getElementById('clientNif').addEventListener('input', (e) => {
+    state.currentQuote.client.nif = e.target.value.trim();
+    validateClientNifFeedback(e.target.value.trim());
+    updatePreview();
+  });
+  document.getElementById('clientEmail').addEventListener('input', (e) => {
+    state.currentQuote.client.email = e.target.value;
+    updatePreview();
+  });
+  document.getElementById('clientPhone').addEventListener('input', (e) => {
+    state.currentQuote.client.phone = e.target.value;
+    updatePreview();
+  });
+  document.getElementById('clientAddress').addEventListener('input', (e) => {
+    state.currentQuote.client.address = e.target.value;
+    updatePreview();
+  });
+
+  // Opções de Impostos e Condições
+  document.getElementById('vatExemptionSelect').addEventListener('change', (e) => {
+    state.currentQuote.vatExemption = e.target.value;
+    recalculateTotals();
+    updatePreview();
+  });
+  document.getElementById('irsRetentionSelect').addEventListener('change', (e) => {
+    state.currentQuote.irsRetentionRate = parseFloat(e.target.value) || 0;
+    recalculateTotals();
+    updatePreview();
+  });
+  document.getElementById('paymentTermsInput').addEventListener('input', (e) => {
+    state.currentQuote.paymentTerms = e.target.value;
+    updatePreview();
+  });
+  document.getElementById('notesInput').addEventListener('input', (e) => {
+    state.currentQuote.notes = e.target.value;
+    updatePreview();
+  });
+}
+
+// Validador de NIF de Portugal (Módulo 11)
+function isValidPortugueseNif(nif) {
+  if (!nif) return false;
+  const cleanNif = nif.replace(/\s+/g, '');
+  if (!/^\d{9}$/.test(cleanNif)) return false;
+
+  // Primeiro dígito válido em Portugal:
+  // 1, 2, 3 (Pessoas Singulares)
+  // 5 (Pessoas Coletivas / Empresas)
+  // 6 (Organismos Públicos)
+  // 8 (Entidades Despersonalizadas)
+  // 9 (Sociedades Irregulares / Não Residentes)
+  const firstDigit = cleanNif.charAt(0);
+  if (!['1', '2', '3', '5', '6', '8', '9'].includes(firstDigit)) return false;
+
+  let sum = 0;
+  for (let i = 0; i < 8; i++) {
+    sum += parseInt(cleanNif.charAt(i), 10) * (9 - i);
+  }
+
+  const remainder = sum % 11;
+  let checkDigit = 11 - remainder;
+  if (checkDigit >= 10) checkDigit = 0;
+
+  return checkDigit === parseInt(cleanNif.charAt(8), 10);
+}
+
+function validateClientNifFeedback(nif) {
+  const feedbackEl = document.getElementById('clientNifFeedback');
+  if (!feedbackEl) return;
+
+  if (!nif) {
+    feedbackEl.innerHTML = '';
+    return;
+  }
+
+  if (isValidPortugueseNif(nif)) {
+    feedbackEl.innerHTML = '<span class="text-xs text-emerald-600 font-medium"><i class="fa-solid fa-circle-check"></i> NIF Válido (Portugal)</span>';
+  } else {
+    feedbackEl.innerHTML = '<span class="text-xs text-amber-600 font-medium"><i class="fa-solid fa-triangle-exclamation"></i> NIF com formato ou dígito de controlo inválido</span>';
+  }
+}
+
+// Manipulação de Itens
+function addNewEmptyItem() {
+  const newItem = {
+    id: generateUUID(),
+    description: "",
+    details: "",
+    unit: "unid",
+    quantity: 1,
+    price: 0.00,
+    discountPercent: 0,
+    vatRate: 23
+  };
+  state.currentQuote.items.push(newItem);
+  renderItemsTable();
+  recalculateTotals();
+  updatePreview();
+}
+
+function addItemFromPreset(preset) {
+  if (!preset) return;
+  const newItem = {
+    id: generateUUID(),
+    description: preset.description,
+    details: preset.details || "",
+    unit: preset.unit || "unid",
+    quantity: 1,
+    price: preset.price || 0,
+    discountPercent: 0,
+    vatRate: preset.vatRate !== undefined ? preset.vatRate : 23
+  };
+  state.currentQuote.items.push(newItem);
+  renderItemsTable();
+  recalculateTotals();
+  updatePreview();
+}
+
+function removeItem(id) {
+  state.currentQuote.items = state.currentQuote.items.filter(item => item.id !== id);
+  renderItemsTable();
+  recalculateTotals();
+  updatePreview();
+}
+
+function updateItemField(id, field, value) {
+  const item = state.currentQuote.items.find(i => i.id === id);
+  if (!item) return;
+
+  if (['quantity', 'price', 'discountPercent', 'vatRate'].includes(field)) {
+    item[field] = parseFloat(value) || 0;
+  } else {
+    item[field] = value;
+  }
+
+  recalculateTotals();
+  updatePreview();
+}
+
+// Cálculos Financeiros com Regras Fiscais Portuguesas
+function calculateQuoteFinancials() {
+  const items = state.currentQuote.items;
+  let subtotalBruto = 0;
+  let totalDescontos = 0;
+  let baseTributavel = 0;
+  let totalIva = 0;
+  const ivaPorTaxa = {};
+
+  items.forEach(item => {
+    const qty = item.quantity || 0;
+    const price = item.price || 0;
+    const itemTotal = qty * price;
+    const discount = (itemTotal * (item.discountPercent || 0)) / 100;
+    const itemLiquido = Math.max(0, itemTotal - discount);
+
+    subtotalBruto += itemTotal;
+    totalDescontos += discount;
+    baseTributavel += itemLiquido;
+
+    // Cálculo do IVA respeitando isenções
+    if (state.currentQuote.vatExemption === 'none') {
+      const taxRate = item.vatRate !== undefined ? item.vatRate : 23;
+      const vatVal = (itemLiquido * taxRate) / 100;
+      totalIva += vatVal;
+
+      if (!ivaPorTaxa[taxRate]) ivaPorTaxa[taxRate] = { base: 0, valor: 0 };
+      ivaPorTaxa[taxRate].base += itemLiquido;
+      ivaPorTaxa[taxRate].valor += vatVal;
+    }
+  });
+
+  // Retenção de IRS (se aplicável para ENI / Recibos Verdes a outras entidades com contabilidade)
+  const irsRate = state.currentQuote.irsRetentionRate || 0;
+  const totalIrs = (baseTributavel * irsRate) / 100;
+
+  // Total Final
+  const totalGeral = baseTributavel + totalIva;
+  const totalAPagar = totalGeral - totalIrs;
+
+  return {
+    subtotalBruto,
+    totalDescontos,
+    baseTributavel,
+    totalIva,
+    ivaPorTaxa,
+    irsRate,
+    totalIrs,
+    totalGeral,
+    totalAPagar
+  };
+}
+
+function recalculateTotals() {
+  const totals = calculateQuoteFinancials();
+
+  // Atualizar valores no painel lateral
+  document.getElementById('summarySubtotal').textContent = formatCurrency(totals.baseTributavel);
+  document.getElementById('summaryIva').textContent = formatCurrency(totals.totalIva);
+  document.getElementById('summaryTotal').textContent = formatCurrency(totals.totalGeral);
+
+  const irsRow = document.getElementById('summaryIrsRow');
+  if (totals.irsRate > 0) {
+    irsRow.classList.remove('hidden');
+    document.getElementById('summaryIrs').textContent = `-${formatCurrency(totals.totalIrs)} (${totals.irsRate}%)`;
+    document.getElementById('summaryFinalPayable').textContent = formatCurrency(totals.totalAPagar);
+  } else {
+    irsRow.classList.add('hidden');
+  }
+}
+
+// Renderização dos Itens na Tabela de Edição
+function renderItemsTable() {
+  const tbody = document.getElementById('itemsTableBody');
+  if (!tbody) return;
+
+  if (state.currentQuote.items.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" class="text-center py-8 text-slate-400">
+          <i class="fa-solid fa-inbox text-3xl mb-2 block"></i>
+          Nenhum serviço adicionado. Clique em "Adicionar Item" ou escolha do catálogo abaixo.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = state.currentQuote.items.map((item, index) => {
+    const itemTotalLiquido = Math.max(0, (item.quantity * item.price) * (1 - (item.discountPercent || 0)/100));
+    return `
+      <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
+        <td class="p-2.5 text-center font-medium text-slate-400">${index + 1}</td>
+        <td class="p-2.5">
+          <input type="text" value="${escapeHtml(item.description)}" placeholder="Descrição do serviço/artigo"
+            oninput="updateItemField('${item.id}', 'description', this.value)"
+            class="w-full text-sm font-medium border border-slate-200 rounded px-2.5 py-1.5 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none" />
+          <input type="text" value="${escapeHtml(item.details || '')}" placeholder="Detalhes técnicos adicionais (opcional)"
+            oninput="updateItemField('${item.id}', 'details', this.value)"
+            class="w-full text-xs text-slate-500 border-none bg-transparent px-1 mt-1 outline-none" />
+        </td>
+        <td class="p-2.5 w-24">
+          <input type="number" step="0.5" min="0.01" value="${item.quantity}"
+            oninput="updateItemField('${item.id}', 'quantity', this.value)"
+            class="w-full text-sm text-center border border-slate-200 rounded px-2 py-1.5 focus:border-blue-600 outline-none" />
+        </td>
+        <td class="p-2.5 w-24">
+          <select onchange="updateItemField('${item.id}', 'unit', this.value)"
+            class="w-full text-xs border border-slate-200 rounded px-1.5 py-1.5 bg-white outline-none">
+            <option value="unid" ${item.unit === 'unid' ? 'selected' : ''}>unid</option>
+            <option value="horas" ${item.unit === 'horas' ? 'selected' : ''}>horas</option>
+            <option value="dias" ${item.unit === 'dias' ? 'selected' : ''}>dias</option>
+            <option value="m²" ${item.unit === 'm²' ? 'selected' : ''}>m²</option>
+            <option value="metro" ${item.unit === 'metro' ? 'selected' : ''}>metro</option>
+            <option value="kg" ${item.unit === 'kg' ? 'selected' : ''}>kg</option>
+            <option value="projeto" ${item.unit === 'projeto' ? 'selected' : ''}>projeto</option>
+            <option value="sessão" ${item.unit === 'sessão' ? 'selected' : ''}>sessão</option>
+            <option value="viagem" ${item.unit === 'viagem' ? 'selected' : ''}>viagem</option>
+          </select>
+        </td>
+        <td class="p-2.5 w-28">
+          <div class="relative">
+            <input type="number" step="0.01" min="0" value="${item.price}"
+              oninput="updateItemField('${item.id}', 'price', this.value)"
+              class="w-full text-sm text-right pr-6 pl-2 border border-slate-200 rounded py-1.5 focus:border-blue-600 outline-none" />
+            <span class="absolute right-2 top-2 text-xs text-slate-400">€</span>
+          </div>
+        </td>
+        <td class="p-2.5 w-24 text-right font-medium text-slate-700 text-sm">
+          ${formatCurrency(itemTotalLiquido)}
+        </td>
+        <td class="p-2.5 w-12 text-center">
+          <button onclick="removeItem('${item.id}')" title="Remover item"
+            class="text-slate-300 hover:text-red-500 transition p-1.5 rounded-full hover:bg-red-50">
+            <i class="fa-solid fa-trash-can text-sm"></i>
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// Atualização da Folha de Pré-visualização (A4 Oficial)
+function updatePreview() {
+  const quote = state.currentQuote;
+  const profile = state.profile;
+  const totals = calculateQuoteFinancials();
+
+  // Cabeçalho da Empresa / Emitente
+  document.getElementById('prevProfileName').textContent = profile.name || "João Santos";
+  document.getElementById('prevProfileNif').textContent = profile.nif || "269413448";
+  document.getElementById('prevProfileType').textContent = profile.businessType || "Empresário em Nome Individual";
+  document.getElementById('prevProfileContact').innerHTML = `
+    ${profile.phone ? `<div><i class="fa-solid fa-phone mr-1.5 text-blue-600"></i> ${escapeHtml(profile.phone)}</div>` : ''}
+    ${profile.email ? `<div><i class="fa-solid fa-envelope mr-1.5 text-blue-600"></i> ${escapeHtml(profile.email)}</div>` : ''}
+    ${profile.address ? `<div><i class="fa-solid fa-location-dot mr-1.5 text-blue-600"></i> ${escapeHtml(profile.address)}</div>` : ''}
+  `;
+
+  // Logotipo
+  const logoEl = document.getElementById('prevLogo');
+  if (profile.logoUrl) {
+    logoEl.src = profile.logoUrl;
+    logoEl.classList.remove('hidden');
+  } else {
+    logoEl.classList.add('hidden');
+  }
+
+  // Metadados do Orçamento
+  document.getElementById('prevQuoteNumber').textContent = quote.number || "ORC-000";
+  document.getElementById('prevIssueDate').textContent = formatDatePt(quote.issueDate);
+  document.getElementById('prevValidDate').textContent = formatDatePt(quote.validUntilDate);
+
+  // Dados do Cliente
+  document.getElementById('prevClientName').textContent = quote.client.name || "A/C Exmo.(a) Cliente";
+  document.getElementById('prevClientNif').textContent = quote.client.nif ? `NIF: ${quote.client.nif}` : "NIF: Consumidor Final";
+  document.getElementById('prevClientAddress').textContent = quote.client.address || "";
+  document.getElementById('prevClientPhone').textContent = quote.client.phone ? `Tel: ${quote.client.phone}` : "";
+  document.getElementById('prevClientEmail').textContent = quote.client.email ? `Email: ${quote.client.email}` : "";
+
+  // Tabela de Itens no Documento
+  const prevItemsTbody = document.getElementById('prevItemsTableBody');
+  if (quote.items.length === 0) {
+    prevItemsTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-400 italic">Sem itens discriminados</td></tr>`;
+  } else {
+    prevItemsTbody.innerHTML = quote.items.map((item, index) => {
+      const itemSubtotal = Math.max(0, (item.quantity * item.price) * (1 - (item.discountPercent || 0)/100));
+      return `
+        <tr class="border-b border-slate-100">
+          <td class="py-2.5 px-3 text-slate-400 text-center font-mono text-xs">${index + 1}</td>
+          <td class="py-2.5 px-3">
+            <div class="font-semibold text-slate-800 text-sm">${escapeHtml(item.description || 'Item sem descrição')}</div>
+            ${item.details ? `<div class="text-xs text-slate-500 mt-0.5 leading-snug">${escapeHtml(item.details)}</div>` : ''}
+          </td>
+          <td class="py-2.5 px-3 text-center text-slate-700 text-sm font-medium">
+            ${item.quantity} <span class="text-xs text-slate-400">${item.unit}</span>
+          </td>
+          <td class="py-2.5 px-3 text-right text-slate-700 text-sm font-medium">
+            ${formatCurrency(item.price)}
+          </td>
+          <td class="py-2.5 px-3 text-right text-slate-900 font-semibold text-sm">
+            ${formatCurrency(itemSubtotal)}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  // Linhas de Totais no Documento
+  document.getElementById('prevSubtotalBase').textContent = formatCurrency(totals.baseTributavel);
+
+  // Menção de Isenção ou Detalhe do IVA
+  const vatRow = document.getElementById('prevVatRow');
+  const vatNotice = document.getElementById('prevVatNotice');
+  if (quote.vatExemption !== 'none') {
+    const exemptionObj = VAT_EXEMPTIONS.find(v => v.value === quote.vatExemption);
+    vatRow.classList.add('hidden');
+    vatNotice.classList.remove('hidden');
+    vatNotice.textContent = exemptionObj ? exemptionObj.label : "Regime de Isenção de IVA";
+  } else {
+    vatRow.classList.remove('hidden');
+    vatNotice.classList.add('hidden');
+    document.getElementById('prevVatAmount').textContent = formatCurrency(totals.totalIva);
+  }
+
+  // Linha de Retenção de IRS
+  const irsRowPrev = document.getElementById('prevIrsRow');
+  if (totals.irsRate > 0) {
+    irsRowPrev.classList.remove('hidden');
+    document.getElementById('prevIrsRateLabel').textContent = `Retenção IRS (${totals.irsRate}%)`;
+    document.getElementById('prevIrsAmount').textContent = `-${formatCurrency(totals.totalIrs)}`;
+    document.getElementById('prevGrandTotalLabel').textContent = "Total Líquido a Pagar";
+    document.getElementById('prevGrandTotal').textContent = formatCurrency(totals.totalAPagar);
+  } else {
+    irsRowPrev.classList.add('hidden');
+    document.getElementById('prevGrandTotalLabel').textContent = "Total Geral";
+    document.getElementById('prevGrandTotal').textContent = formatCurrency(totals.totalGeral);
+  }
+
+  // Dados Bancários para Pagamento
+  document.getElementById('prevIban').textContent = profile.iban || "A definir";
+  document.getElementById('prevBankName').textContent = profile.bankName ? `(${profile.bankName})` : "";
+
+  // Condições e Observações
+  document.getElementById('prevPaymentTerms').textContent = quote.paymentTerms || "A combinar com o cliente.";
+  document.getElementById('prevNotes').textContent = quote.notes || "Obrigado pela sua preferência!";
+}
+
+// Render Geral
+function renderAll() {
+  // Preencher inputs
+  document.getElementById('quoteNumber').value = state.currentQuote.number;
+  document.getElementById('issueDate').value = state.currentQuote.issueDate;
+  document.getElementById('validUntilDate').value = state.currentQuote.validUntilDate;
+
+  document.getElementById('clientName').value = state.currentQuote.client.name;
+  document.getElementById('clientNif').value = state.currentQuote.client.nif;
+  document.getElementById('clientEmail').value = state.currentQuote.client.email;
+  document.getElementById('clientPhone').value = state.currentQuote.client.phone;
+  document.getElementById('clientAddress').value = state.currentQuote.client.address;
+
+  document.getElementById('vatExemptionSelect').value = state.currentQuote.vatExemption;
+  document.getElementById('irsRetentionSelect').value = state.currentQuote.irsRetentionRate;
+  document.getElementById('paymentTermsInput').value = state.currentQuote.paymentTerms;
+  document.getElementById('notesInput').value = state.currentQuote.notes;
+
+  renderCatalogPresetsList();
+  renderItemsTable();
+  recalculateTotals();
+  updatePreview();
+}
+
+// Catálogo Rápido na Barra Inferior
+function renderCatalogPresetsList() {
+  const container = document.getElementById('catalogQuickAdd');
+  if (!container) return;
+
+  container.innerHTML = state.catalog.map(cat => `
+    <div class="mb-4">
+      <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <i class="fa-solid ${cat.icon || 'fa-tag'} text-blue-600"></i> ${escapeHtml(cat.category)}
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        ${cat.items.map(item => `
+          <div onclick="addPresetItemById('${item.id}')"
+            class="cursor-pointer bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 rounded-lg p-2.5 transition flex justify-between items-center group">
+            <div class="truncate pr-2">
+              <div class="text-xs font-semibold text-slate-800 group-hover:text-blue-900 truncate">${escapeHtml(item.description)}</div>
+              <div class="text-[11px] text-slate-500">${formatCurrency(item.price)} / ${item.unit}</div>
+            </div>
+            <button class="bg-white group-hover:bg-blue-600 text-slate-500 group-hover:text-white rounded-md p-1.5 transition text-xs shadow-sm flex-shrink-0">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function addPresetItemById(id) {
+  for (const cat of state.catalog) {
+    const found = cat.items.find(i => i.id === id);
+    if (found) {
+      addItemFromPreset(found);
+      showNotification(`Item "${found.description}" adicionado!`, 'success');
+      return;
+    }
+  }
+}
+
+// Ações do Orçamento
+function saveQuoteToHistory() {
+  try {
+    const quoteToSave = JSON.parse(JSON.stringify(state.currentQuote));
+    const totals = calculateQuoteFinancials();
+    quoteToSave.totalValue = totals.totalGeral;
+    quoteToSave.savedAt = new Date().toISOString();
+
+    const existingIndex = state.savedQuotes.findIndex(q => q.id === quoteToSave.id || q.number === quoteToSave.number);
+    if (existingIndex >= 0) {
+      state.savedQuotes[existingIndex] = quoteToSave;
+    } else {
+      state.savedQuotes.unshift(quoteToSave);
+    }
+
+    localStorage.setItem(STORAGE_KEYS.SAVED_QUOTES, JSON.stringify(state.savedQuotes));
+    showNotification(`Orçamento ${quoteToSave.number} guardado com sucesso!`, 'success');
+  } catch (err) {
+    console.error("Erro ao guardar histórico:", err);
+    showNotification("Erro ao guardar o orçamento.", "error");
+  }
+}
+
+function createNewQuote() {
+  if (confirm("Deseja iniciar um novo orçamento? (Certifique-se de que guardou o atual antes de prosseguir)")) {
+    state.currentQuote = {
+      id: generateUUID(),
+      number: "ORC-" + new Date().getFullYear() + "/" + String(Math.floor(Math.random() * 900) + 100),
+      issueDate: new Date().toISOString().split('T')[0],
+      validUntilDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      client: { name: "", nif: "", email: "", phone: "", address: "" },
+      items: [],
+      discountGlobal: 0,
+      vatExemption: state.profile.defaultVatExemption || "none",
+      irsRetentionRate: state.profile.defaultIrsRetention || 0,
+      paymentTerms: state.profile.defaultPaymentTerms || "",
+      notes: state.profile.notes || ""
+    };
+    renderAll();
+    showNotification("Novo orçamento iniciado!", "info");
+  }
+}
+
+// Exportação / Impressão em PDF
+function printQuote() {
+  window.print();
+}
+
+// Enviar Resumo por WhatsApp
+function shareViaWhatsApp() {
+  const quote = state.currentQuote;
+  const totals = calculateQuoteFinancials();
+  const clientName = quote.client.name ? quote.client.name.trim() : "Exmo.(a) Cliente";
+  const clientPhone = quote.client.phone ? quote.client.phone.replace(/[^0-9]/g, '') : "";
+
+  let itemsSummary = quote.items.map((it, idx) => `  ${idx + 1}. ${it.description} (${it.quantity} ${it.unit}) - ${formatCurrency(it.price * it.quantity)}`).join('\n');
+
+  let text = `Olá ${clientName},\n\n`;
+  text += `Segue o resumo da proposta de orçamento *${quote.number}* de *João Santos* (NIF: 269413448):\n\n`;
+  text += `*Serviços Orçamentados:*\n${itemsSummary}\n\n`;
+  text += `*Base Tributável:* ${formatCurrency(totals.baseTributavel)}\n`;
+  if (totals.totalIva > 0) {
+    text += `*IVA:* ${formatCurrency(totals.totalIva)}\n`;
+  } else if (quote.vatExemption !== 'none') {
+    text += `*IVA:* Isento (${VAT_EXEMPTIONS.find(v=>v.value===quote.vatExemption)?.label || 'Isenção'})\n`;
+  }
+  text += `*VALOR TOTAL:* ${formatCurrency(totals.totalGeral)}\n\n`;
+  text += `*Validade:* Até ${formatDatePt(quote.validUntilDate)}\n`;
+  text += `*Condições de Pagamento:* ${quote.paymentTerms}\n\n`;
+  text += `Estamos à total disposição para qualquer esclarecimento ou para agendamento dos trabalhos!`;
+
+  const encodedText = encodeURIComponent(text);
+  const waUrl = clientPhone ? `https://wa.me/${clientPhone}?text=${encodedText}` : `https://wa.me/?text=${encodedText}`;
+
+  window.open(waUrl, '_blank');
+}
+
+// Modal do Perfil do Prestador (João Santos)
+function openProfileModal() {
+  const modal = document.getElementById('profileModal');
+  const prof = state.profile;
+
+  document.getElementById('profName').value = prof.name;
+  document.getElementById('profNif').value = prof.nif;
+  document.getElementById('profBusinessType').value = prof.businessType;
+  document.getElementById('profPhone').value = prof.phone;
+  document.getElementById('profEmail').value = prof.email;
+  document.getElementById('profAddress').value = prof.address;
+  document.getElementById('profIban').value = prof.iban;
+  document.getElementById('profBankName').value = prof.bankName;
+  document.getElementById('profLogoUrl').value = prof.logoUrl || "";
+
+  modal.classList.remove('hidden');
+}
+
+function closeProfileModal() {
+  document.getElementById('profileModal').classList.add('hidden');
+}
+
+function saveProfileSettings() {
+  state.profile.name = document.getElementById('profName').value.trim();
+  state.profile.nif = document.getElementById('profNif').value.trim();
+  state.profile.businessType = document.getElementById('profBusinessType').value.trim();
+  state.profile.phone = document.getElementById('profPhone').value.trim();
+  state.profile.email = document.getElementById('profEmail').value.trim();
+  state.profile.address = document.getElementById('profAddress').value.trim();
+  state.profile.iban = document.getElementById('profIban').value.trim();
+  state.profile.bankName = document.getElementById('profBankName').value.trim();
+  state.profile.logoUrl = document.getElementById('profLogoUrl').value.trim();
+
+  localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(state.profile));
+  closeProfileModal();
+  updatePreview();
+  showNotification("Dados de João Santos atualizados com sucesso!", "success");
+}
+
+// Modal de Histórico de Orçamentos
+function openHistoryModal() {
+  const modal = document.getElementById('historyModal');
+  const tbody = document.getElementById('historyTableBody');
+
+  if (state.savedQuotes.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-slate-400">Ainda não existem orçamentos guardados.</td></tr>`;
+  } else {
+    tbody.innerHTML = state.savedQuotes.map(q => `
+      <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+        <td class="p-3 font-semibold text-blue-700">${escapeHtml(q.number)}</td>
+        <td class="p-3">${escapeHtml(q.client?.name || 'Cliente')}</td>
+        <td class="p-3 text-xs text-slate-500">${formatDatePt(q.issueDate)}</td>
+        <td class="p-3 font-bold text-slate-800">${formatCurrency(q.totalValue || 0)}</td>
+        <td class="p-3 text-right space-x-1.5">
+          <button onclick="loadQuoteFromHistory('${q.id}')" title="Carregar Orçamento"
+            class="px-2.5 py-1 text-xs bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 rounded transition font-medium">
+            <i class="fa-solid fa-folder-open mr-1"></i> Abrir
+          </button>
+          <button onclick="deleteQuoteFromHistory('${q.id}')" title="Eliminar"
+            class="px-2 py-1 text-xs bg-red-50 hover:bg-red-600 hover:text-white text-red-600 rounded transition">
+            <i class="fa-solid fa-trash-can"></i>
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function closeHistoryModal() {
+  document.getElementById('historyModal').classList.add('hidden');
+}
+
+function loadQuoteFromHistory(id) {
+  const found = state.savedQuotes.find(q => q.id === id);
+  if (found) {
+    state.currentQuote = JSON.parse(JSON.stringify(found));
+    renderAll();
+    closeHistoryModal();
+    showNotification(`Orçamento ${found.number} carregado!`, "info");
+  }
+}
+
+function deleteQuoteFromHistory(id) {
+  if (confirm("Tem a certeza que deseja remover este orçamento do histórico?")) {
+    state.savedQuotes = state.savedQuotes.filter(q => q.id !== id);
+    localStorage.setItem(STORAGE_KEYS.SAVED_QUOTES, JSON.stringify(state.savedQuotes));
+    openHistoryModal();
+    showNotification("Orçamento removido do histórico.", "info");
+  }
+}
+
+// Notificações Toast Modernas
+function showNotification(message, type = 'info') {
+  const toast = document.createElement('div');
+  const bg = type === 'success' ? 'bg-emerald-600' : (type === 'error' ? 'bg-rose-600' : 'bg-slate-800');
+  toast.className = `fixed bottom-5 right-5 z-50 text-white px-4 py-3 rounded-lg shadow-xl text-sm font-medium flex items-center gap-2 transform transition-all duration-300 translate-y-3 opacity-0 ${bg}`;
+
+  const icon = type === 'success' ? 'fa-circle-check' : (type === 'error' ? 'fa-circle-exclamation' : 'fa-info-circle');
+  toast.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${escapeHtml(message)}</span>`;
+
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.remove('translate-y-3', 'opacity-0');
+  }, 10);
+
+  setTimeout(() => {
+    toast.classList.add('opacity-0', 'translate-y-2');
+    setTimeout(() => toast.remove(), 300);
+  }, 3200);
+}
+
+// Utilitários de Formatação
+function formatCurrency(val) {
+  return new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR' }).format(val || 0);
+}
+
+function formatDatePt(dateStr) {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+}
+
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+function escapeHtml(string) {
+  if (!string) return '';
+  return String(string)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
