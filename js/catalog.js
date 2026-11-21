@@ -155,7 +155,7 @@ const DEFAULT_PROFILE = {
   impic: "130221",
   businessType: "Empresário em Nome Individual (ENI)",
   phone: "+351 918940497",
-  email: "radical.joaosantos@gmail.com.pt",
+  email: "radical.joaosantos@gmail.com",
   address: "Portugal",
   iban: "PT50 0045 3468 4034 9598 3935 8",
   bankName: "Crédito Agrícola",

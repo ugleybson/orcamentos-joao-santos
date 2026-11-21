@@ -150,8 +150,8 @@ function loadStoredData() {
     const storedProfile = localStorage.getItem(STORAGE_KEYS.PROFILE);
     state.profile = storedProfile ? JSON.parse(storedProfile) : { ...DEFAULT_PROFILE };
 
-    // Sincronizar dados reais de João Santos caso o perfil ainda contenha dados de exemplo
-    if (state.profile.email === "contato@joaosantos.pt" || (state.profile.iban && state.profile.iban.includes("0000 0000")) || !state.profile.impic) {
+    // Sincronizar dados reais de João Santos caso o perfil ainda contenha dados de exemplo ou e-mail com .pt
+    if (state.profile.email === "contato@joaosantos.pt" || state.profile.email === "radical.joaosantos@gmail.com.pt" || (state.profile.iban && state.profile.iban.includes("0000 0000")) || !state.profile.impic) {
       state.profile.phone = DEFAULT_PROFILE.phone;
       state.profile.email = DEFAULT_PROFILE.email;
       state.profile.iban = DEFAULT_PROFILE.iban;
